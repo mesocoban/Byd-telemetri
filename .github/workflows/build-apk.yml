@@ -1,0 +1,89 @@
+name: BYD Telemetre APK
+
+on:
+  push:
+    paths:
+      - 'source.zip'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: byd-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Depoyu indir
+        uses: actions/checkout@v4
+
+      - name: Java 17 kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Kaynak projeyi ac
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f source.zip
+          mkdir -p project output
+          unzip -q source.zip -d project
+          test -f project/gradlew
+          test -f project/settings.gradle.kts
+
+      - name: Android SDK 37 kur
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDK_ROOT"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" "platforms;android-37" "platform-tools"
+          printf 'sdk.dir=%s\n' "$SDK_ROOT" > project/local.properties
+
+      - name: APK derle
+        working-directory: project
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash gradlew :app-mobile:assembleDebug --no-daemon --stacktrace --console=plain 2>&1 | tee ../output/build.log
+
+      - name: APK imzasini dogrula
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp project/app-mobile/build/outputs/apk/debug/app-mobile-debug.apk output/BYD-Telemetre-0.5.9.2-debug.apk
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          APKSIGNER=$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose output/BYD-Telemetre-0.5.9.2-debug.apk | tee output/signature.txt
+          cd output
+          sha256sum BYD-Telemetre-0.5.9.2-debug.apk > SHA256.txt
+
+      - name: APK dosyasini yayinla
+        uses: actions/upload-artifact@v4
+        with:
+          name: BYD-Telemetre-APK
+          path: |
+            output/BYD-Telemetre-0.5.9.2-debug.apk
+            output/SHA256.txt
+            output/signature.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Derleme gunlugunu sakla
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BYD-Telemetre-Derleme-Gunlugu
+          path: output/build.log
+          if-no-files-found: ignore
+          retention-days: 14
